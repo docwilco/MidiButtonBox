@@ -1,19 +1,40 @@
 #include <Arduino.h>
 #include <Bounce2.h>
+#define ENCODER_OPTIMIZE_INTERRUPTS
 #include <Encoder.h>
 #include <array>
 
+// Configure the pins of your encoders here. The first pin should be connected
+// to the A pin of the first encoder, the second pin to the B pin of the first
+// encoder, the third pin to the A pin of the second encoder, etc. You should
+// always have an even number of pins, obviously. The common pin of each encoder
+// should be connected to ground.
 constexpr int encoder_pins[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+// Configure the pins of your buttons here. These can be regular buttons or the
+// switch functionality of your encoders. One pin per button, and the other pin
+// of each button should be connected to ground. 
 constexpr int button_pins[] = {10, 11, 12, 14, 15};
+// Control Channel ID for the first encoder. Other encoders will simply use the
+// next control channel ID. The X-Touch Mini uses 0x10 for the first encoder,
+// 0x11 for the second, etc. That seems to work well.
+const uint8_t first_encoder_control_channel = 0x10;
+// Note ID for the first button. Other buttons will simply use the next note ID.
+// The X-Touch Mini uses 0x20 for the first button, 0x21 for the second, etc.
+const uint8_t first_button_note = 0x20;
 
-constexpr uint16_t num_encoder_pins =
+/////////////////////////////////////////////////////////////
+// You should not need to change anything below this line. //
+/////////////////////////////////////////////////////////////
+
+// Some sanity checks.
+constexpr uint8_t num_encoder_pins =
     sizeof(encoder_pins) / sizeof(encoder_pins[0]);
-static_assert(num_encoder_pins % 2 == 0, "Number of pins must be even");
-constexpr uint16_t num_encoders = num_encoder_pins / 2;
-constexpr uint16_t num_buttons = sizeof(button_pins) / sizeof(button_pins[0]);
+static_assert(num_encoder_pins % 2 == 0, "Number of encoder pins must be even");
+constexpr uint8_t num_encoders = num_encoder_pins / 2;
+constexpr uint8_t num_buttons = sizeof(button_pins) / sizeof(button_pins[0]);
 
-constexpr bool contains_led_builtin(const int pins[], uint16_t num_pins) {
-    for (uint16_t i = 0; i < num_pins; i++) {
+constexpr bool contains_led_builtin(const int pins[], uint8_t num_pins) {
+    for (uint8_t i = 0; i < num_pins; i++) {
         if (pins[i] == LED_BUILTIN) {
             return true;
         }
@@ -28,7 +49,6 @@ static_assert(!contains_led_builtin(button_pins, num_buttons),
 class EncoderMeta {
    public:
     Encoder *encoder = nullptr;
-    int32_t previous_position = 0;
     uint32_t previous_millis = 0;
     uint8_t control = 0;
 };
@@ -44,18 +64,18 @@ ButtonMeta buttons[num_buttons];
 
 void setup() {
     // Loop through pairs of pins
-    for (uint16_t i = 0; i < num_encoders; i++) {
-        uint16_t pin_a = encoder_pins[i * 2];
-        uint16_t pin_b = encoder_pins[i * 2 + 1];
+    for (uint8_t i = 0; i < num_encoders; i++) {
+        uint8_t pin_a = encoder_pins[i * 2];
+        uint8_t pin_b = encoder_pins[i * 2 + 1];
         // Encoder library does the pullups for us.
         encoders[i].encoder = new Encoder(pin_a, pin_b);
         // Just mirroring what the X-Touch Mini does.
-        encoders[i].control = 0x10 + i;
+        encoders[i].control = first_encoder_control_channel + i;
     }
-    for (uint16_t i = 0; i < num_buttons; i++) {
+    for (uint8_t i = 0; i < num_buttons; i++) {
         buttons[i].button->attach(button_pins[i], INPUT_PULLUP);
         buttons[i].button->interval(5);
-        buttons[i].note = 0x20 + i;
+        buttons[i].note = first_button_note + i;
     }
     // Wait for the pullups to complete.
     // https://www.pjrc.com/teensy/td_digital.html says that this is plenty
@@ -63,9 +83,7 @@ void setup() {
 }
 
 void check_encoder(EncoderMeta *encoder_meta) {
-    int32_t position = encoder_meta->encoder->read();
-    int32_t rotation = position - encoder_meta->previous_position;
-    encoder_meta->previous_position = position;
+    int32_t rotation = encoder_meta->encoder->readAndReset();
 
     if (rotation != 0) {
         uint32_t now = millis();
@@ -89,7 +107,7 @@ void check_encoder(EncoderMeta *encoder_meta) {
                 // this is 64 + (-rotation)
                 rotation = (int32_t)64 - rotation;
             }
-            // usbMIDI.sendControlChange(encoder_meta->control, rotation, 1);
+            usbMIDI.sendControlChange(encoder_meta->control, rotation, 1);
         }
     }
 }
@@ -104,10 +122,10 @@ void check_button(ButtonMeta *button_meta) {
 }
 
 void loop() {
-    for (uint16_t i = 0; i < num_encoders; i++) {
+    for (uint8_t i = 0; i < num_encoders; i++) {
         check_encoder(&encoders[i]);
     }
-    for (uint16_t i = 0; i < num_buttons; i++) {
+    for (uint8_t i = 0; i < num_buttons; i++) {
         check_button(&buttons[i]);
     }
     // Consume all incoming MIDI messages to prevent hangups.
