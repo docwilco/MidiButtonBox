@@ -6,8 +6,8 @@
 // Configure the pins of your encoders here. The first pin should be connected
 // to the A pin of the first encoder, the second pin to the B pin of the first
 // encoder, the third pin to the A pin of the second encoder, etc. You should
-// always have an even number of pins, obviously. The common pin of each encoder
-// should be connected to ground.
+// always have an even number of pins, obviously. The common pin (C) of each
+// encoder should be connected to ground.
 constexpr int encoder_pins[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 // Configure the pins of your buttons here. These can be regular buttons or the
 // switch functionality of your encoders. One pin per button, and the other pin
@@ -69,7 +69,9 @@ void setup() {
         uint8_t pin_a = encoder_pins[i * 2];
         uint8_t pin_b = encoder_pins[i * 2 + 1];
         // Encoder library does the pullups for us.
-        encoders[i].encoder = new Encoder(pin_a, pin_b);
+        // Also most encoders have A lead B in the signals for clockwise, but
+        // this library has it the other way around.
+        encoders[i].encoder = new Encoder(pin_b, pin_a);
         // Just mirroring what the X-Touch Mini does.
         encoders[i].control = first_encoder_control_channel + i;
     }
