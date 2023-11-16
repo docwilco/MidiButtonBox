@@ -2,7 +2,6 @@
 #include <Bounce2.h>
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #include <Encoder.h>
-#include <array>
 
 // Configure the pins of your encoders here. The first pin should be connected
 // to the A pin of the first encoder, the second pin to the B pin of the first
@@ -33,6 +32,7 @@ static_assert(num_encoder_pins % 2 == 0, "Number of encoder pins must be even");
 constexpr uint8_t num_encoders = num_encoder_pins / 2;
 constexpr uint8_t num_buttons = sizeof(button_pins) / sizeof(button_pins[0]);
 
+#ifdef LED_BUILTIN
 constexpr bool contains_led_builtin(const int pins[], uint8_t num_pins) {
     for (uint8_t i = 0; i < num_pins; i++) {
         if (pins[i] == LED_BUILTIN) {
@@ -45,6 +45,7 @@ static_assert(!contains_led_builtin(encoder_pins, num_encoder_pins),
               "Don't use the built-in LED pin");
 static_assert(!contains_led_builtin(button_pins, num_buttons),
               "Don't use the built-in LED pin");
+#endif /* LED_BUILTIN */
 
 class EncoderMeta {
    public:
@@ -63,7 +64,7 @@ EncoderMeta encoders[num_encoders];
 ButtonMeta buttons[num_buttons];
 
 void setup() {
-    // Loop through pairs of pins
+    // Loop through pairs of pins.
     for (uint8_t i = 0; i < num_encoders; i++) {
         uint8_t pin_a = encoder_pins[i * 2];
         uint8_t pin_b = encoder_pins[i * 2 + 1];
@@ -72,6 +73,7 @@ void setup() {
         // Just mirroring what the X-Touch Mini does.
         encoders[i].control = first_encoder_control_channel + i;
     }
+    // For buttons, we need to do the pullups ourselves.
     for (uint8_t i = 0; i < num_buttons; i++) {
         buttons[i].button->attach(button_pins[i], INPUT_PULLUP);
         buttons[i].button->interval(5);
@@ -83,40 +85,50 @@ void setup() {
 }
 
 void check_encoder(EncoderMeta *encoder_meta) {
+    // Use readAndReset() to always only get incremental changes.
+    //
+    // read() and write() both have to disable and enable interrupts, so this is
+    // more efficient than calling read() and then write(0). Even if we only
+    // call write(0) when read() returns a non-zero value, writing that zero
+    // when reading is almost negligible compared to disabling and enabling
+    // interrupts.
     int32_t rotation = encoder_meta->encoder->readAndReset();
 
-    if (rotation != 0) {
-        uint32_t now = millis();
-        uint32_t elapsed = millis() - encoder_meta->previous_millis;
-        encoder_meta->previous_millis = now;
-        if (elapsed < 100) {
-            rotation *= (100 / elapsed);
-        }
-        // Encoders can be a bit chattery, so debounce. 2ms seems to work well.
-        if (elapsed > 2) {
-            // Max value is 127, and we want to use 0-63 for one direction and
-            // 64-127 for the other, so clamp to -63 to 63.
-            // Yes, 0 and 64 go unused, but that's fine. This feels neat, and
-            // mirrors what the X-Touch Mini does.
-            if (rotation > 63) {
-                rotation = 63;
-            } else if (rotation < -63) {
-                rotation = -63;
-            }
-            if (rotation < 0) {
-                // this is 64 + (-rotation)
-                rotation = (int32_t)64 - rotation;
-            }
-            usbMIDI.sendControlChange(encoder_meta->control, rotation, 1);
-        }
+    if (rotation == 0) {
+        return;
     }
+    uint32_t now = millis();
+    uint32_t elapsed = millis() - encoder_meta->previous_millis;
+    encoder_meta->previous_millis = now;
+    if (elapsed < 100) {
+        rotation *= (100 / elapsed);
+    }
+    // Encoders can be a bit chattery, so debounce. 2ms seems to work well.
+    if (elapsed <= 2) {
+        return;
+    }
+    // Max value is 127, and we want to use 0-63 for one direction and
+    // 64-127 for the other, so clamp to -63 to 63.
+    // Yes, 0 and 64 go unused, but that's fine. This feels neat, and
+    // mirrors what the X-Touch Mini does.
+    if (rotation > 63) {
+        rotation = 63;
+    } else if (rotation < -63) {
+        rotation = -63;
+    }
+    if (rotation < 0) {
+        // this is 64 + (-rotation)
+        rotation = (int32_t)64 - rotation;
+    }
+    usbMIDI.sendControlChange(encoder_meta->control, rotation, 1);
 }
 
 void check_button(ButtonMeta *button_meta) {
     button_meta->button->update();
     if (button_meta->button->pressed()) {
         usbMIDI.sendNoteOn(button_meta->note, 127, 1);
-    } else if (button_meta->button->released()) {
+    } 
+    if (button_meta->button->released()) {
         usbMIDI.sendNoteOff(button_meta->note, 0, 1);
     }
 }
