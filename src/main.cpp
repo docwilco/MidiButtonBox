@@ -2,17 +2,19 @@
 #include <Bounce2.h>
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #include <Encoder.h>
+#include <Adafruit_TinyUSB.h>
+#include <MIDI.h>
 
 // Configure the pins of your encoders here. The first pin should be connected
 // to the A pin of the first encoder, the second pin to the B pin of the first
 // encoder, the third pin to the A pin of the second encoder, etc. You should
 // always have an even number of pins, obviously. The common pin (C) of each
 // encoder should be connected to ground.
-constexpr int encoder_pins[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+constexpr int encoder_pins[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 // Configure the pins of your buttons here. These can be regular buttons or the
 // switch functionality of your encoders. One pin per button, and the other pin
 // of each button should be connected to ground. 
-constexpr int button_pins[] = {10, 11, 12, 14, 15};
+constexpr int button_pins[] = {18, 17, 16, 15, 14};
 // Control Channel ID for the first encoder. Other encoders will simply use the
 // next control channel ID. The X-Touch Mini uses 0x10 for the first encoder,
 // 0x11 for the second, etc. That seems to work well.
@@ -47,6 +49,10 @@ static_assert(!contains_led_builtin(button_pins, num_buttons),
               "Don't use the built-in LED pin");
 #endif /* LED_BUILTIN */
 
+Adafruit_USBD_MIDI usb_midi;
+
+MIDI_CREATE_INSTANCE(Adafruit_USBD_MIDI, usb_midi, MIDI);
+
 class EncoderMeta {
    public:
     Encoder *encoder = nullptr;
@@ -64,6 +70,17 @@ EncoderMeta encoders[num_encoders];
 ButtonMeta buttons[num_buttons];
 
 void setup() {
+    #if defined(ARDUINO_ARCH_MBED) && defined(ARDUINO_ARCH_RP2040)
+    // Manual begin() is required on core without built-in support for TinyUSB such as mbed rp2040
+    TinyUSB_Device_Init(0);
+    #endif
+    //USBDevice.setProductDescriptor("5 Knob MIDI Controller");
+    //USBDevice.setManufacturerDescriptor("DocWilco");
+
+    MIDI.begin(MIDI_CHANNEL_OMNI);
+
+    Serial.begin(115200);
+
     // Loop through pairs of pins.
     for (uint8_t i = 0; i < num_encoders; i++) {
         uint8_t pin_a = encoder_pins[i * 2];
@@ -84,6 +101,10 @@ void setup() {
     // Wait for the pullups to complete.
     // https://www.pjrc.com/teensy/td_digital.html says that this is plenty
     delayMicroseconds(10);
+    while ( !TinyUSBDevice.mounted() ) {
+        delay(1);
+    }
+
 }
 
 void check_encoder(EncoderMeta *encoder_meta) {
@@ -122,16 +143,16 @@ void check_encoder(EncoderMeta *encoder_meta) {
         // this is 64 + (-rotation)
         rotation = (int32_t)64 - rotation;
     }
-    usbMIDI.sendControlChange(encoder_meta->control, rotation, 1);
+    MIDI.sendControlChange(encoder_meta->control, rotation, 1);
 }
 
 void check_button(ButtonMeta *button_meta) {
     button_meta->button->update();
     if (button_meta->button->pressed()) {
-        usbMIDI.sendNoteOn(button_meta->note, 127, 1);
+        MIDI.sendNoteOn(button_meta->note, 127, 1);
     } 
     if (button_meta->button->released()) {
-        usbMIDI.sendNoteOff(button_meta->note, 0, 1);
+        MIDI.sendNoteOff(button_meta->note, 0, 1);
     }
 }
 
@@ -143,6 +164,6 @@ void loop() {
         check_button(&buttons[i]);
     }
     // Consume all incoming MIDI messages to prevent hangups.
-    while (usbMIDI.read()) {
+    while (MIDI.read()) {
     }
 }
